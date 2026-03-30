@@ -1,53 +1,96 @@
 'use client';
 
-import { useChat } from '@ai-sdk/react';
+import { useState, useCallback } from 'react';
 import { ExhibitorsTable } from '@/components/ExhibitorsTable';
 import { Chat } from '@/components/Chat';
-import { useEffect, useState } from 'react';
 import { Exhibitor } from '@/lib/schema';
 
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export default function Home() {
-  // @ts-ignore - v3 API: sendMessage, status, messages, setMessages
-  const { messages, sendMessage, status } = useChat();
+  const [messages, setMessages] = useState<Message[]>([]);
   const [exhibitors, setExhibitors] = useState<Exhibitor[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Extract exhibitors from tool invocations in messages
-  useEffect(() => {
-    let latestExhibitors: Exhibitor[] = [];
-    const safeMessages = messages || [];
+  const sendMessage = useCallback(async (text: string) => {
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: text,
+    };
     
-    safeMessages.forEach((m: any) => {
-      // In v3, tool results are in message parts
-      if (m?.parts) {
-        m.parts.forEach((part: any) => {
-          if (part?.type === 'tool-invocation' && part?.toolInvocation) {
-            const ti = part.toolInvocation;
-            if (ti?.toolName === 'scrapeExhibitors' && ti?.state === 'result') {
-              if (ti.result?.exhibitors && Array.isArray(ti.result.exhibitors)) {
-                latestExhibitors = ti.result.exhibitors;
-              }
-            }
-          }
-        });
-      }
-      // Also check legacy toolInvocations format
-      if (m?.toolInvocations) {
-        m.toolInvocations.forEach((ti: any) => {
-          if (ti?.toolName === 'scrapeExhibitors' && ti?.state === 'result') {
-            if (ti.result?.exhibitors && Array.isArray(ti.result.exhibitors)) {
-              latestExhibitors = ti.result.exhibitors;
-            }
-          }
-        });
-      }
-    });
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setIsLoading(true);
 
-    if (latestExhibitors.length > 0 && latestExhibitors.length !== exhibitors.length) {
-      setExhibitors([...latestExhibitors]);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+
+      // Check for scrape results in custom header
+      const scrapeHeader = res.headers.get('X-Scrape-Result');
+      if (scrapeHeader) {
+        try {
+          const scrapeData = JSON.parse(scrapeHeader);
+          if (scrapeData.success && scrapeData.exhibitors?.length > 0) {
+            setExhibitors(scrapeData.exhibitors);
+          }
+        } catch (e) {
+          console.warn('Failed to parse scrape header:', e);
+        }
+      }
+
+      // Read the streamed text response
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let assistantContent = '';
+
+      const assistantMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '',
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = decoder.decode(value, { stream: true });
+          assistantContent += chunk;
+          
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = {
+              ...updated[updated.length - 1],
+              content: assistantContent,
+            };
+            return updated;
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'Désolé, une erreur est survenue. Veuillez réessayer.',
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [messages, exhibitors.length]);
-
-  const isLoading = status === 'streaming' || status === 'submitted';
+  }, [messages]);
 
   return (
     <div className="flex h-screen w-full flex-col bg-background text-foreground md:flex-row font-sans">
@@ -56,7 +99,7 @@ export default function Home() {
           <h1 className="text-xl font-bold tracking-tight text-primary">Shaarp Scraper AI</h1>
         </div>
         <Chat 
-           messages={messages || []} 
+           messages={messages} 
            sendMessage={sendMessage}
            isLoading={isLoading} 
         />
