@@ -204,7 +204,7 @@ async function scrapeExhibitorDetailUniversal(
 ): Promise<Exhibitor | null> {
   const page = await context.newPage();
   try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 35000 }).catch(() => {});
     await cleanPageObstacles(page);
     await randomDelay(1000, 2000);
 
@@ -212,20 +212,29 @@ async function scrapeExhibitorDetailUniversal(
       document.querySelectorAll('script, style, noscript, svg, iframe').forEach(el => el.remove());
       const emails: string[] = [];
       const phones: string[] = [];
-      const links = Array.from(document.querySelectorAll('a[href]'));
       
-      for (const a of links) {
+      const anchors = Array.from(document.querySelectorAll('a[href]'));
+      const enrichedLinks = anchors.map(a => {
         const href = (a as HTMLAnchorElement).href;
         if (href.startsWith('mailto:')) emails.push(href.replace('mailto:', '').split('?')[0]);
         if (href.startsWith('tel:')) phones.push(href.replace('tel:', '').trim());
-      }
+        
+        return {
+          url: href,
+          text: (a as HTMLElement).innerText?.trim().substring(0, 30),
+          title: (a as HTMLElement).title || "",
+          label: (a as HTMLElement).getAttribute('aria-label') || "",
+          hasImg: !!a.querySelector('img'),
+          imgAlt: a.querySelector('img')?.getAttribute('alt') || ""
+        };
+      });
 
       const main = document.querySelector('main') || document.querySelector('#content') || document.body;
       return {
         text: (main as HTMLElement).innerText.substring(0, 35000),
         emails,
         phones,
-        allLinks: links.map(a => (a as HTMLAnchorElement).href).slice(0, 70)
+        allLinksEnriched: enrichedLinks.slice(0, 150) // More links to catch footer socials
       };
     });
 
@@ -236,9 +245,10 @@ async function scrapeExhibitorDetailUniversal(
 
 TEXTE : ${rawData.text}
 EMAILS : ${rawData.emails.join(', ')}
-LIENS : ${rawData.allLinks.join(', ')}
+LIENS ENRICHIS (utilisez label/title pour identifier les réseaux sociaux) : ${JSON.stringify(rawData.allLinksEnriched)}
 
-TA MISSION : Extraire UNIQUEMENT les contacts directs. Priorité aux emails mailto.`,
+TA MISSION : Extraire les coordonnées de contact (email, site, LinkedIn, X, FB, Instagram, TikTok, stand).
+Indices : Un lien avec label="LinkedIn" est le bon, même si l'URL est cryptique.`,
     })) as any;
 
     return object.exhibitor;
