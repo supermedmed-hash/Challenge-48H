@@ -5,6 +5,7 @@ import { ExhibitorsTable } from '@/components/ExhibitorsTable';
 import { Chat } from '@/components/Chat';
 import { ScrapeProgress } from '@/components/ScrapeProgress';
 import { Exhibitor } from '@/lib/schema';
+import { ModeToggle } from '@/components/ui/mode-toggle'; // Import du bouton
 
 interface Message {
   id: string;
@@ -212,15 +213,22 @@ export default function Home() {
   return (
     <div className="flex h-screen w-full flex-col bg-background text-foreground md:flex-row font-mono">
       <div className="flex w-full flex-col border-r border-sidebar-border md:h-full md:w-[400px] lg:w-[450px] overflow-hidden bg-sidebar">
+        
+        {/* HEADER : On ajoute le bouton ici */}
         <div className="flex h-16 items-center border-b px-6 bg-muted/30 shrink-0">
           <h1 className="text-2xl font-bold tracking-tight text-primary">Shaarp Scraper AI</h1>
+          <div className="ml-auto">
+            <ModeToggle />
+          </div>
         </div>
+
         <Chat 
            messages={messages} 
            sendMessage={sendMessage}
            isLoading={isLoading} 
         />
       </div>
+      
       <div className="flex flex-1 flex-col overflow-hidden bg-muted/10">
         {progress.active && (
           <ScrapeProgress 
