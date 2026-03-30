@@ -26,76 +26,108 @@ async function autoScroll(page: Page) {
 }
 
 // ========================================
+// Helper: Clean page of common overlays (Cookies, modales)
+// ========================================
+async function cleanPageObstacles(page: Page) {
+  try {
+    await page.evaluate(() => {
+      const commonSelectors = [
+        '[id*="cookie"]', '[class*="cookie"]', '[id*="consent"]', '[class*="consent"]',
+        '.modal-backdrop', '.modal-open', '.sp-overlay', '#onetrust-banner-sdk',
+        '.gdpr-banner', '.didomi-popup-view'
+      ];
+      commonSelectors.forEach(sel => {
+        try {
+          const elements = document.querySelectorAll(sel);
+          elements.forEach(el => (el as HTMLElement).style.display = 'none');
+        } catch {}
+      });
+      // Force scrollability in case modale locked it
+      document.body.style.overflow = 'auto';
+      document.documentElement.style.overflow = 'auto';
+    });
+  } catch {}
+}
+
+// ========================================
 // Phase 0: Structure Analysis via LLM
 // ========================================
-async function analyzePageStructure(page: Page): Promise<{ exhibitorSelector: string, nextSelector: string }> {
+type NavType = 'pagination' | 'infiniteScroll' | 'loadMore';
+
+async function analyzePageStructure(page: Page): Promise<{ exhibitorSelector: string, nextSelector: string, navType: NavType }> {
   const structureData = await page.evaluate(() => {
     const anchors = Array.from(document.querySelectorAll('a[href]')).slice(0, 150);
-    return anchors.map(a => ({
-      text: (a as HTMLElement).innerText.substring(0, 50).trim(),
-      href: (a as HTMLAnchorElement).href,
-      className: a.className,
-      parentClass: a.parentElement?.className,
-      grandParentClass: a.parentElement?.parentElement?.className,
-    }));
+    const buttons = Array.from(document.querySelectorAll('button')).slice(0, 50);
+    
+    return {
+      links: anchors.map(a => ({
+        text: (a as HTMLElement).innerText.substring(0, 50).trim(),
+        href: (a as HTMLAnchorElement).href,
+        className: a.className,
+        parentClass: a.parentElement?.className,
+      })),
+      potentialButtons: buttons.map(b => ({
+        text: b.innerText.substring(0, 30).trim(),
+        className: b.className
+      }))
+    };
   });
 
   const { object } = (await generateObject({
-    model: openai.chat('gpt-4o-mini'),
+    model: openai.chat('gpt-4.1-mini'),
     schema: zodSchema(z.object({
-      exhibitorSelector: z.string().describe("Sélecteur CSS ou pattern d'identifiant pour les liens vers les fiches exposants (ex: '.exhibitor-list-item a' ou 'a.profile-link')"),
-      nextSelector: z.string().describe("Sélecteur CSS pour le bouton de page suivante (ex: 'a.next', 'li.pagination-next a')"),
+      exhibitorSelector: z.string().describe("Sélecteur CSS pour les liens fiches (ex: '.card a')"),
+      nextSelector: z.string().describe("Sélecteur pour Suivant / Charger plus (ex: '.next')"),
+      navType: z.enum(['pagination', 'infiniteScroll', 'loadMore']).describe("Type de navigation détecté"),
     })),
-    prompt: `Analyse cette structure de liens d'un site de salon professionnel :\n\n${JSON.stringify(structureData)}\n\nIDENTIFIE :\n1. Le sélecteur CSS le plus probable pour cliquer sur le NOM ou le LIEN de chaque exposant individuel.\n2. Le sélecteur CSS du bouton "Suivant" (pagination).\n\nRenvoie uniquement les sélecteurs CSS valides. Si tu ne trouves pas, renvoie une chaîne vide.`,
+    prompt: `Analyse cette structure d'un site de salon :\n\n${JSON.stringify(structureData)}\n\nTA MISSION :\n1. Trouve le sélecteur CSS des liens fiches exposants.\n2. Identifie si le site utilise un bouton "Suivant" (pagination), un défilement infini (infiniteScroll) ou un bouton "Charger plus" (loadMore).\n\nRenvoie uniquement des sélecteurs valides.`,
   })) as any;
 
   return { 
     exhibitorSelector: object.exhibitorSelector || 'a[href*="/exhibitor"], a[href*="/exposant"], a[href*="/company"]', 
-    nextSelector: object.nextSelector || 'a[aria-label="Next"], a:has-text("Next"), a:has-text("Suivant")'
+    nextSelector: object.nextSelector || 'a[aria-label="Next"], button:has-text("More")',
+    navType: object.navType as NavType || 'pagination'
   };
 }
 
 // ========================================
-// Phase 1: Collect exhibitor links (Universal)
+// Phase 1: Collect exhibitor links (Universal v2)
 // ========================================
 async function* collectExhibitorLinksUniversal(
   page: Page,
   baseUrl: string,
-  selectors: { exhibitorSelector: string, nextSelector: string }
+  selectors: { exhibitorSelector: string, nextSelector: string, navType: NavType }
 ): AsyncGenerator<ScrapeProgressEvent, { links: string[]; names: string[] }> {
   const allLinks: Map<string, string> = new Map(); // href -> name
   let pageNum = 1;
-  const maxPages = 40; // High limit for integral scraping
+  const maxPages = 40;
+  let lastLinksCount = -1;
+  let stableStrike = 0;
+
+  yield { type: 'status', message: `🔍 Mode de navigation : ${selectors.navType.toUpperCase()}` };
 
   while (pageNum <= maxPages) {
-    yield { type: 'status', message: `📄 Intégration de la page ${pageNum}... (${allLinks.size} liens récoltés)` };
+    yield { type: 'status', message: `📄 Collecte en cours... (${allLinks.size} liens identifiés)` };
+    await cleanPageObstacles(page);
     await autoScroll(page);
-    await randomDelay(1000, 2000);
+    await randomDelay(1500, 2500);
 
-    let extracted = await page.evaluate((sel: string) => {
+    // Smart extraction: Handle empty links (overlays) by looking at neighbors
+    const extracted = await page.evaluate((sel: string) => {
       const items = Array.from(document.querySelectorAll(sel));
-      return items.map(el => ({
-        href: (el as HTMLAnchorElement).href,
-        name: (el as HTMLElement).innerText?.trim() || "Inconnu"
-      })).filter(x => x.href && !x.href.includes('#') && !x.href.includes('javascript:'));
+      return items.map(el => {
+        const href = (el as HTMLAnchorElement).href;
+        let name = (el as HTMLElement).innerText?.trim();
+        
+        // If empty text (common for overlays), look at parent container
+        if (!name || name.length < 2) {
+          const container = el.closest('div, li, article');
+          name = container ? (container as HTMLElement).innerText?.split('\n')[0].trim() : "Inconnu";
+        }
+        
+        return { href, name };
+      }).filter(x => x.href && !x.href.includes('#') && !x.href.includes('javascript:'));
     }, selectors.exhibitorSelector);
-
-    // --- FALLBACK LORS DE LA COLLECTE ---
-    if (extracted.length === 0 && pageNum === 1) {
-      yield { type: 'status', message: `⚠️ Sélecteur IA non concluant. Tentative de secours heuristique...` };
-      extracted = await page.evaluate(() => {
-        const anchors = Array.from(document.querySelectorAll('a[href]'));
-        return anchors.map(a => ({
-          href: (a as HTMLAnchorElement).href,
-          name: (a as HTMLElement).innerText?.trim() || "Inconnu"
-        })).filter(x => {
-          const h = x.href;
-          const isInternal = h.startsWith(window.location.origin);
-          const isFiche = h.includes('/exhibitor') || h.includes('/exposant') || h.includes('/company') || h.split('/').length > 4;
-          return h && isInternal && isFiche && !h.includes('#');
-        });
-      });
-    }
 
     for (const item of extracted) {
       if (!allLinks.has(item.href)) {
@@ -103,27 +135,52 @@ async function* collectExhibitorLinksUniversal(
       }
     }
 
-    // Click Next
-    const clicked = await page.evaluate((sel: string) => {
-      try {
-        const next = document.querySelector(sel) as HTMLElement;
-        if (next && next.offsetParent !== null) {
-          next.scrollIntoView();
-          next.click();
-          return true;
-        }
-      } catch {}
-      return false;
-    }, selectors.nextSelector);
-
-    if (!clicked) {
-      yield { type: 'status', message: `✅ Fin de la navigation (pas de bouton Suivant détecté).` };
-      break;
+    // Stop if we don't find new links (for Infinite Scroll / Load More)
+    if (allLinks.size === lastLinksCount) {
+      stableStrike++;
+      if (stableStrike >= 3) {
+        yield { type: 'status', message: `✅ Collecte terminée (nombre de liens stabilisé).` };
+        break;
+      }
+    } else {
+      stableStrike = 0;
+      lastLinksCount = allLinks.size;
     }
 
-    pageNum++;
-    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await randomDelay(1500, 2500);
+    if (selectors.navType === 'pagination') {
+      const clicked = await page.evaluate((sel: string) => {
+        try {
+          const next = document.querySelector(sel) as HTMLElement;
+          if (next && next.offsetParent !== null) {
+            next.scrollIntoView();
+            next.click();
+            return true;
+          }
+        } catch {}
+        return false;
+      }, selectors.nextSelector);
+
+      if (!clicked) break;
+      pageNum++;
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    } else if (selectors.navType === 'loadMore') {
+      const clicked = await page.evaluate((sel: string) => {
+        try {
+          const btn = document.querySelector(sel) as HTMLElement;
+          if (btn && btn.offsetParent !== null) {
+            btn.click();
+            return true;
+          }
+        } catch {}
+        return false;
+      }, selectors.nextSelector);
+      if (!clicked) break;
+      await randomDelay(2000, 3000);
+    } else { // infiniteScroll
+      // Just continue looping, autoScroll does the job
+      if (pageNum > 20) break; // Hard limit for infinite scroll
+      pageNum++;
+    }
   }
 
   return { 
@@ -143,12 +200,11 @@ async function scrapeExhibitorDetailUniversal(
   const page = await context.newPage();
   try {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    await randomDelay(800, 1500);
+    await cleanPageObstacles(page);
+    await randomDelay(1000, 2000);
 
-    // Deep extraction: text + emails/phones in DOM
     const rawData = await page.evaluate(() => {
       document.querySelectorAll('script, style, noscript, svg, iframe').forEach(el => el.remove());
-      
       const emails: string[] = [];
       const phones: string[] = [];
       const links = Array.from(document.querySelectorAll('a[href]'));
@@ -161,32 +217,27 @@ async function scrapeExhibitorDetailUniversal(
 
       const main = document.querySelector('main') || document.querySelector('#content') || document.body;
       return {
-        text: (main as HTMLElement).innerText.substring(0, 30000),
+        text: (main as HTMLElement).innerText.substring(0, 35000),
         emails,
         phones,
-        allLinks: links.map(a => (a as HTMLAnchorElement).href).slice(0, 50)
+        allLinks: links.map(a => (a as HTMLAnchorElement).href).slice(0, 70)
       };
     });
 
     const { object } = (await generateObject({
-      model: openai.chat('gpt-4o-mini'),
+      model: openai.chat('gpt-4.1-mini'),
       schema: zodSchema(singleExhibitorProcessSchema),
-      prompt: `Voici le contenu d'une fiche d'entreprise : "${fallbackName}". 
+      prompt: `Entreprise : "${fallbackName}". 
 
 TEXTE : ${rawData.text}
-EMAILS DÉTECTÉS : ${rawData.emails.join(', ')}
-TÉLÉPHONES : ${rawData.phones.join(', ')}
+EMAILS : ${rawData.emails.join(', ')}
 LIENS : ${rawData.allLinks.join(', ')}
 
-TA MISSION : Extraire UNIQUEMENT les COORDONNÉES DE CONTACT Direct (email, site officiel, LinkedIn, Twitter, téléphone, stand).
-
-Si tu vois une URL de type "https://www.linkedin.com/company/...", c'est le LinkedIn. 
-Si l'email n'est pas dans le texte mais dans les emails de secours, utilise-le.`,
+TA MISSION : Extraire UNIQUEMENT les contacts directs. Priorité aux emails mailto.`,
     })) as any;
 
     return object.exhibitor;
-  } catch (error: any) {
-    console.warn(`[detail] Erreur sur ${url}: ${error.message}`);
+  } catch {
     return null;
   } finally {
     await page.close();
@@ -194,7 +245,7 @@ Si l'email n'est pas dans le texte mais dans les emails de secours, utilise-le.`
 }
 
 // ========================================
-// Phase 3: Orchestrator (Universal Streaming)
+// Phase 3: Orchestrator
 // ========================================
 export interface ScrapeProgressEvent {
   type: 'status' | 'progress' | 'exhibitor' | 'done' | 'error';
@@ -205,31 +256,25 @@ export interface ScrapeProgressEvent {
 }
 
 export async function* scrapeExhibitorsStream(url: string): AsyncGenerator<ScrapeProgressEvent> {
-  yield { type: 'status', message: `🚀 Initialisation du robot universel...` };
-  
+  yield { type: 'status', message: `🚀 Initialisation du moteur Tout-Terrain...` };
   const browser = await chromium.launch({ headless: true });
 
   try {
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      viewport: { width: 1920, height: 1080 },
     });
 
     const page = await context.newPage();
-    yield { type: 'status', message: `🌐 Chargement et analyse de la structure du site...` };
-
     await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
+    await cleanPageObstacles(page);
     await randomDelay(2000, 3000);
 
-    // Step 0: Analyze structure
     const selectors = await analyzePageStructure(page);
-    yield { type: 'status', message: `🤖 Structure détectée (Lien: "${selectors.exhibitorSelector}", Page: "${selectors.nextSelector}").` };
-
-    // Step 1: Integral Collection (AsyncGenerator)
+    
     let links: string[] = [];
     let names: string[] = [];
-    
     const collector = collectExhibitorLinksUniversal(page, url, selectors);
+    
     while (true) {
       const { done, value } = await collector.next();
       if (done) {
@@ -241,13 +286,10 @@ export async function* scrapeExhibitorsStream(url: string): AsyncGenerator<Scrap
       }
     }
     
-    yield { type: 'status', message: `📍 Analyse intégrale : ${links.length} fiches identifiées.` };
-
     if (links.length > 0) {
-      const total = Math.min(links.length, 300); // Higher safety cap
-      yield { type: 'status', message: `🔬 Extraction approfondie de ${total} contacts...` };
+      const total = Math.min(links.length, 300);
+      yield { type: 'status', message: `🔬 Extraction approfondie (${total} fiches)...` };
 
-      // Optimized Parallelism: Batch of 5
       const batchSize = 5;
       let processed = 0;
 
@@ -262,27 +304,20 @@ export async function* scrapeExhibitorsStream(url: string): AsyncGenerator<Scrap
         for (const result of results) {
           processed++;
           if (result.status === 'fulfilled' && result.value) {
-            yield {
-              type: 'exhibitor',
-              exhibitor: result.value,
-              current: processed,
-              total,
-            };
+            yield { type: 'exhibitor', exhibitor: result.value, current: processed, total };
           }
         }
         
         yield { type: 'progress', current: processed, total, message: `Analyse: ${processed}/${total}` };
-        await randomDelay(200, 500);
       }
 
-      yield { type: 'done', total: processed, message: `✅ Traitement intégral terminé (${processed} fiches).` };
+      yield { type: 'done', total: processed, message: `✅ Terminé (${processed} fiches).` };
     } else {
-       yield { type: 'error', message: `Aucune fiche d'entreprise n'a été détectée. Vérifiez l'URL ou essayez une page plus spécifique.` };
+       yield { type: 'error', message: `Aucun lien détecté.` };
     }
 
   } catch (error: any) {
-    console.error("[scrapeExhibitors] Erreur:", error.message);
-    yield { type: 'error', message: `❌ Erreur critique: ${error.message}` };
+    yield { type: 'error', message: `❌ Erreur: ${error.message}` };
   } finally {
     await browser.close();
   }

@@ -62,7 +62,7 @@ export async function POST(req: Request) {
 
   // No URL: just chat normally
   const result = streamText({
-    model: openai.chat('gpt-4o-mini'),
+    model: openai.chat('gpt-4.1-mini'),
     messages,
     system: `Tu es "Shaarp Expo Scraper", un agent d'extraction B2B.
 Ton rôle est d'extraire la liste des exposants depuis les sites web de salons professionnels.
