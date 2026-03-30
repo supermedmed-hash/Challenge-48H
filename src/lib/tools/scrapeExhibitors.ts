@@ -58,22 +58,21 @@ async function analyzePageStructure(page: Page): Promise<{ exhibitorSelector: st
 // ========================================
 // Phase 1: Collect exhibitor links (Universal)
 // ========================================
-async function collectExhibitorLinksUniversal(
+async function* collectExhibitorLinksUniversal(
   page: Page,
   baseUrl: string,
-  selectors: { exhibitorSelector: string, nextSelector: string },
-  onProgress: (msg: string) => void
-): Promise<{ links: string[]; names: string[] }> {
+  selectors: { exhibitorSelector: string, nextSelector: string }
+): AsyncGenerator<ScrapeProgressEvent, { links: string[]; names: string[] }> {
   const allLinks: Map<string, string> = new Map(); // href -> name
   let pageNum = 1;
   const maxPages = 40; // High limit for integral scraping
 
   while (pageNum <= maxPages) {
-    onProgress(`📄 Intégration de la page ${pageNum}...`);
+    yield { type: 'status', message: `📄 Intégration de la page ${pageNum}... (${allLinks.size} liens récoltés)` };
     await autoScroll(page);
     await randomDelay(1000, 2000);
 
-    const extracted = await page.evaluate((sel: string) => {
+    let extracted = await page.evaluate((sel: string) => {
       const items = Array.from(document.querySelectorAll(sel));
       return items.map(el => ({
         href: (el as HTMLAnchorElement).href,
@@ -81,13 +80,28 @@ async function collectExhibitorLinksUniversal(
       })).filter(x => x.href && !x.href.includes('#') && !x.href.includes('javascript:'));
     }, selectors.exhibitorSelector);
 
+    // --- FALLBACK LORS DE LA COLLECTE ---
+    if (extracted.length === 0 && pageNum === 1) {
+      yield { type: 'status', message: `⚠️ Sélecteur IA non concluant. Tentative de secours heuristique...` };
+      extracted = await page.evaluate(() => {
+        const anchors = Array.from(document.querySelectorAll('a[href]'));
+        return anchors.map(a => ({
+          href: (a as HTMLAnchorElement).href,
+          name: (a as HTMLElement).innerText?.trim() || "Inconnu"
+        })).filter(x => {
+          const h = x.href;
+          const isInternal = h.startsWith(window.location.origin);
+          const isFiche = h.includes('/exhibitor') || h.includes('/exposant') || h.includes('/company') || h.split('/').length > 4;
+          return h && isInternal && isFiche && !h.includes('#');
+        });
+      });
+    }
+
     for (const item of extracted) {
       if (!allLinks.has(item.href)) {
         allLinks.set(item.href, item.name);
       }
     }
-
-    onProgress(`📄 Page ${pageNum}: ${allLinks.size} liens récoltés.`);
 
     // Click Next
     const clicked = await page.evaluate((sel: string) => {
@@ -103,7 +117,7 @@ async function collectExhibitorLinksUniversal(
     }, selectors.nextSelector);
 
     if (!clicked) {
-      onProgress(`✅ Fin de la navigation (pas de bouton Suivant détecté).`);
+      yield { type: 'status', message: `✅ Fin de la navigation (pas de bouton Suivant détecté).` };
       break;
     }
 
@@ -211,12 +225,22 @@ export async function* scrapeExhibitorsStream(url: string): AsyncGenerator<Scrap
     const selectors = await analyzePageStructure(page);
     yield { type: 'status', message: `🤖 Structure détectée (Lien: "${selectors.exhibitorSelector}", Page: "${selectors.nextSelector}").` };
 
-    // Step 1: Integral Collection
-    const { links, names } = await collectExhibitorLinksUniversal(page, url, selectors, (msg) => {
-      // yield inside if would require generator, using simple messages for now
-    });
+    // Step 1: Integral Collection (AsyncGenerator)
+    let links: string[] = [];
+    let names: string[] = [];
     
-    // Manual yield of progress
+    const collector = collectExhibitorLinksUniversal(page, url, selectors);
+    while (true) {
+      const { done, value } = await collector.next();
+      if (done) {
+        links = value.links;
+        names = value.names;
+        break;
+      } else {
+        yield value as ScrapeProgressEvent;
+      }
+    }
+    
     yield { type: 'status', message: `📍 Analyse intégrale : ${links.length} fiches identifiées.` };
 
     if (links.length > 0) {
@@ -229,10 +253,10 @@ export async function* scrapeExhibitorsStream(url: string): AsyncGenerator<Scrap
 
       for (let i = 0; i < total; i += batchSize) {
         const batch = links.slice(i, Math.min(i + batchSize, total));
-        const batchNames = batch.map((_, idx) => names[i + idx] || `Entreprise ${i + idx + 1}`);
+        const batchNames = batch.map((_: string, idx: number) => names[i + idx] || `Entreprise ${i + idx + 1}`);
 
         const results = await Promise.allSettled(
-          batch.map((link, idx) => scrapeExhibitorDetailUniversal(context, link, batchNames[idx]))
+          batch.map((link: string, idx: number) => scrapeExhibitorDetailUniversal(context, link, batchNames[idx]))
         );
 
         for (const result of results) {

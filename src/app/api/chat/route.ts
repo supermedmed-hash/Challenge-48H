@@ -12,7 +12,7 @@ function extractUrl(text: string): string | null {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  
+
   const rawMessages = body.messages || [];
   const messages = rawMessages.map((m: any) => {
     if (m.content) return { role: m.role, content: m.content };
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
   // If URL detected, stream scrape progress
   if (url) {
     console.log(`[route] URL detected: ${url}, starting deep scrape stream...`);
-    
+
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
