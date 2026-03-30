@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -18,6 +18,17 @@ interface ChatProps {
 
 export function Chat({ messages, sendMessage, isLoading }: ChatProps) {
   const [inputValue, setInputValue] = useState('');
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (scrollAreaRef.current) {
+        const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+        if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+    }
+  }, [messages, isLoading]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,8 +39,8 @@ export function Chat({ messages, sendMessage, isLoading }: ChatProps) {
   };
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
-      <ScrollArea className="flex-1 p-4">
+    <div className="flex flex-1 flex-col h-full overflow-hidden shrink-0">
+      <ScrollArea ref={scrollAreaRef} className="flex-1 p-4 h-full">
         <div className="flex flex-col gap-4 pb-4">
           {messages.length === 0 && (
             <div className="text-center text-muted-foreground py-10">
@@ -64,7 +75,7 @@ export function Chat({ messages, sendMessage, isLoading }: ChatProps) {
           )}
         </div>
       </ScrollArea>
-      <div className="p-4 border-t bg-background">
+      <div className="p-4 border-t bg-background shrink-0">
         <form onSubmit={handleSubmit} className="flex gap-2">
           <Input 
             value={inputValue} 
