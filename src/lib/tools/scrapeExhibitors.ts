@@ -76,11 +76,11 @@ async function analyzePageStructure(page: Page): Promise<{ exhibitorSelector: st
   const { object } = (await generateObject({
     model: openai.chat('gpt-4.1-mini'),
     schema: zodSchema(z.object({
-      exhibitorSelector: z.string().describe("Sélecteur CSS pour les liens fiches (ex: '.card a')"),
-      nextSelector: z.string().describe("Sélecteur pour Suivant / Charger plus (ex: '.next')"),
+      exhibitorSelector: z.string().describe("Sélecteur CSS simple pour les liens fiches (ex: '.card a')"),
+      nextSelector: z.string().describe("Sélecteur pour Suivant (ex: 'a.next')"),
       navType: z.enum(['pagination', 'infiniteScroll', 'loadMore']).describe("Type de navigation détecté"),
     })),
-    prompt: `Analyse cette structure d'un site de salon :\n\n${JSON.stringify(structureData)}\n\nTA MISSION :\n1. Trouve le sélecteur CSS des liens fiches exposants.\n2. Identifie si le site utilise un bouton "Suivant" (pagination), un défilement infini (infiniteScroll) ou un bouton "Charger plus" (loadMore).\n\nRenvoie uniquement des sélecteurs valides.`,
+    prompt: `Analyse cette structure d'un site de salon :\n\n${JSON.stringify(structureData)}\n\nTA MISSION :\n1. Trouve le sélecteur CSS le plus SIMPLE et STANDARD (éviter les classes avec : ou []) pour les liens fiches exposants.\n2. Identifie le mode de navigation.\n\nIMPORTANT : Les sélecteurs doivent être valides pour document.querySelectorAll().`,
   })) as any;
 
   return { 
@@ -114,19 +114,24 @@ async function* collectExhibitorLinksUniversal(
 
     // Smart extraction: Handle empty links (overlays) by looking at neighbors
     const extracted = await page.evaluate((sel: string) => {
-      const items = Array.from(document.querySelectorAll(sel));
-      return items.map(el => {
-        const href = (el as HTMLAnchorElement).href;
-        let name = (el as HTMLElement).innerText?.trim();
-        
-        // If empty text (common for overlays), look at parent container
-        if (!name || name.length < 2) {
-          const container = el.closest('div, li, article');
-          name = container ? (container as HTMLElement).innerText?.split('\n')[0].trim() : "Inconnu";
-        }
-        
-        return { href, name };
-      }).filter(x => x.href && !x.href.includes('#') && !x.href.includes('javascript:'));
+      try {
+        const items = Array.from(document.querySelectorAll(sel));
+        return items.map(el => {
+          const href = (el as HTMLAnchorElement).href;
+          let name = (el as HTMLElement).innerText?.trim();
+          
+          // If empty text (common for overlays), look at parent container
+          if (!name || name.length < 2) {
+            const container = el.closest('div, li, article');
+            name = container ? (container as HTMLElement).innerText?.split('\n')[0].trim() : "Inconnu";
+          }
+          
+          return { href, name };
+        }).filter(x => x.href && !x.href.includes('#') && !x.href.includes('javascript:'));
+      } catch (e) {
+        console.error("Sélecteur invalide:", sel);
+        return [];
+      }
     }, selectors.exhibitorSelector);
 
     for (const item of extracted) {
