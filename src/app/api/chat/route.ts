@@ -2,9 +2,14 @@ import { openai } from '@ai-sdk/openai';
 import { streamText } from 'ai';
 import { scrapeExhibitorsStream, ScrapeProgressEvent } from '@/lib/tools/scrapeExhibitors';
 
-export const maxDuration = 300; // 5 minutes for deep scraping
+/**
+ * API ROUTE : CHAT & SCRAPING
+ * C'est ici que l'application reçoit les demandes de l'utilisateur.
+ */
 
-// Simple URL detection
+export const maxDuration = 300; // On laisse 5 minutes au robot pour travailler (Deep Scraping)
+
+// Petite fonction pour voir si l'utilisateur a envoyé un lien (URL)
 function extractUrl(text: string): string | null {
   const match = text.match(/https?:\/\/[^\s"'<>]+/i);
   return match ? match[0] : null;
@@ -30,14 +35,16 @@ export async function POST(req: Request) {
   const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
   const url = lastUserMsg ? extractUrl(lastUserMsg.content) : null;
 
-  // If URL detected, stream scrape progress
+  // SI UNE URL EST DÉTECTÉE : On lance le robot de scraping en mode "Streaming" 
   if (url) {
-    console.log(`[route] URL detected: ${url}, starting deep scrape stream...`);
+    console.log(`[route] URL détectée: ${url}, démarrage du robot...`);
 
     const encoder = new TextEncoder();
+    // On crée un flux (stream) pour envoyer les progrès en temps réel
     const stream = new ReadableStream({
       async start(controller) {
         try {
+          // On appelle notre robot (fourni par scrapeExhibitors.ts)
           for await (const event of scrapeExhibitorsStream(url)) {
             const line = JSON.stringify(event) + '\n';
             controller.enqueue(encoder.encode(line));
@@ -54,7 +61,7 @@ export async function POST(req: Request) {
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
-        'Transfer-Encoding': 'chunked',
+        'Transfer-Encoding': 'chunked', // Permet d'envoyer des morceaux de texte petit à petit
         'X-Scrape-Stream': 'true',
       },
     });

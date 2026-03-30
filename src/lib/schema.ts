@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+/**
+ * LE SCHÉMA DE DONNÉES (Moule de données)
+ * Ici, on définit la "forme" que doivent avoir nos données.
+ * C'est comme un moule : si les données extraites du web ne rentrent pas 
+ * dans le moule, on les corrige ou les rejette.
+ */
+
+// Modèle de base pour un exposant
 export const exhibitorSchema = z.object({
   name: z.string().describe("Nom de l'exposant. Requis."),
   website: z.string().describe("URL du site web de l'exposant. Laisser vide si non trouvé."),

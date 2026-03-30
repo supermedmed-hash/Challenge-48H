@@ -21,14 +21,20 @@ interface ProgressState {
   phase: 'idle' | 'connecting' | 'collecting' | 'scraping' | 'done' | 'error';
 }
 
+/**
+ * PAGE PRINCIPALE (Interface utilisateur)
+ * C'est ici que l'utilisateur entre l'URL et voit le robot travailler.
+ */
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [exhibitors, setExhibitors] = useState<Exhibitor[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [progress, setProgress] = useState<ProgressState>({
+  // --- ÉTATS (Variables qui changent l'interface) ---
+  const [messages, setMessages] = useState<Message[]>([]);            // Historique des messages
+  const [exhibitors, setExhibitors] = useState<Exhibitor[]>([]);      // Liste finale des entreprises extraites
+  const [isLoading, setIsLoading] = useState(false);                  // Le robot est-il en train de charger ?
+  const [progress, setProgress] = useState<ProgressState>({           // Détails sur l'avancement (barre de chargement)
     active: false, status: '', current: 0, total: 0, phase: 'idle',
   });
 
+  // --- FONCTION D'ENVOI (Déclenche le Scraping) ---
   const sendMessage = useCallback(async (text: string) => {
     const userMsg: Message = {
       id: Date.now().toString(),
