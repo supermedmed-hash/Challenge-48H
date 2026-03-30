@@ -211,7 +211,7 @@ export default function Home() {
 
   return (
     <div className="flex h-screen w-full flex-col bg-background text-foreground md:flex-row font-sans">
-      <div className="flex w-full flex-col border-r border-border md:h-full md:w-[400px] lg:w-[450px] overflow-hidden">
+      <div className="flex w-full flex-col border-r border-sidebar-border md:h-full md:w-[400px] lg:w-[450px] overflow-hidden bg-sidebar">
         <div className="flex h-16 items-center border-b px-6 bg-muted/30 shrink-0">
           <h1 className="text-xl font-bold tracking-tight text-primary">Shaarp Scraper AI</h1>
         </div>
