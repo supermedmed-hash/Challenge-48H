@@ -147,19 +147,23 @@ async function scrapeExhibitorDetail(
     });
 
     if (!pageText || pageText.trim().length < 50) {
-      return { name: fallbackName, description: '', website: '', logo: '', booth: '', country: '', linkedin: '', twitter: '', categories: [], email: '', phone: '' };
+      return { name: fallbackName, website: '', booth: '', linkedin: '', twitter: '', email: '', phone: '' };
     }
 
     const { object } = await generateObject({
       model: openai.chat('gpt-4o-mini'),
       schema: zodSchema(singleExhibitorProcessSchema),
-      prompt: `Voici le contenu texte d'une fiche exposant extraite d'un salon professionnel :\n\n${pageText}\n\nExtrais toutes les informations disponibles sur cet exposant. Si le nom n'est pas clair, utilise "${fallbackName}". Pour les champs manquants, laisse une chaîne vide.`,
+      prompt: `Voici le contenu d'une fiche exposant. TA MISSION : Extraire UNIQUEMENT les COORDONNÉES DE CONTACT (email, téléphone, site web, booth, réseaux sociaux). 
+
+IMPORTANT : Ne perds pas de temps avec les descriptions, l'historique de l'entreprise ou les présentations marketing. Ignore tout ce qui n'est pas un contact direct.
+
+Utilise "${fallbackName}" si le nom n'est pas clair. Contenu :\n\n${pageText}`,
     });
 
     return object.exhibitor;
   } catch (error: any) {
     console.warn(`[detail] Erreur sur ${url}: ${error.message}`);
-    return { name: fallbackName, description: '', website: url, logo: '', booth: '', country: '', linkedin: '', twitter: '', categories: [], email: '', phone: '' };
+    return { name: fallbackName, website: url, booth: '', linkedin: '', twitter: '', email: '', phone: '' };
   } finally {
     await page.close();
   }
@@ -256,7 +260,10 @@ export async function* scrapeExhibitorsStream(url: string): AsyncGenerator<Scrap
       const { object } = await generateObject({
         model: openai.chat('gpt-4o-mini'),
         schema: zodSchema(extractionProcessSchema),
-        prompt: `Tu es un expert en extraction de données B2B. Voici le contenu texte :\n\n${pageData}\n\nExtrais TOUS les exposants avec le maximum d'informations. Champs manquants = chaîne vide.`,
+        prompt: `Voici le contenu d'un site de salon professionnel. 
+TA MISSION : Extraire TOUS les exposants avec UNIQUEMENT leurs COORDONNÉES DE CONTACT (email, téléphone, site web, stand/booth, réseaux sociaux). 
+
+IMPORTANT : Ignore totalement les descriptions, les slogans ou les présentations d'activités. Ne remplis que les champs de contact.`,
       });
 
       for (let i = 0; i < object.exhibitors.length; i++) {
