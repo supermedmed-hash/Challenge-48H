@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Shaarp Expo Scraper - Hackathon MVP
 
-## Getting Started
+Bienvenue dans l'Exhibition Scraper Agent, un outil construit en 48h pour la startup **Shaarp** dans le cadre du Hackathon.  
+Cet agent navigue de manière autonome sur les sites web de salons professionnels et extrait la liste des exposants de manière intelligente grâce à l'IA.
 
-First, run the development server:
+## Architecture
 
+Ce projet utilise une stack performante :
+- **Next.js 14/15 (App Router)** pour structurer l'interface et l'API IA.
+- **shadcn/ui & TailwindCSS** pour un design moderne, vibrant, et dynamique.
+- **Vercel AI SDK** pour le flux conversationnel et l'outillage (`tools`). Zod est employé pour garantir la structure (JSON schema) de l'extraction.
+- **Playwright** pour assurer l'accès aux sites qui chargent dynamiquement via JavaScript (contournant via un délai random et l'auto-scroll).
+
+La logique globale sépare nettement :
+- `components/Chat.tsx` & `ExhibitorsTable.tsx` pour l'interface client (réactive, avec téléchargement CSV en local).
+- `api/chat/route.ts` & `lib/tools/scrapeExhibitors.ts` pour la récupération serveur, l'headless browser et le prompt Engineering.
+
+## Installation
+
+1. Pré-requis matériels et logiciels : **NodeJS 18+** et connexion réseau directe.
+2. Installation des dépendances locales :
+   ```bash
+   npm install
+   ```
+3. Installation du navigateur Headless pour l'extraction :
+   ```bash
+   npx playwright install chromium
+   ```
+4. Configuration des clés d'API :
+   - Dupliquez le fichier `.env.example` vers un nouveau fichier `.env.local`
+   - Modifiez `OPENAI_API_KEY` avec votre clé de service.
+
+## Lancement Local
+
+Pour démarrer votre environnement de développement :
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Ouvrez ensuite [http://localhost:3000](http://localhost:3000) :
+1. Envoyez l'URL du salon dans le chat.
+2. Suivez le feedback de l'IA.
+3. Bénéficiez du tableau une fois le web-scraping complété et téléchargez le résultat via le bouton *"Export CSV"*.
