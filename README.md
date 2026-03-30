@@ -45,6 +45,7 @@ L'agent ne se contente pas de lire le texte. Il analyse les métadonnées des ic
 2. **Installer les dépendances** :
    ```bash
    npm install
+   npm install next-themes
    npx playwright install chromium
    ```
 
