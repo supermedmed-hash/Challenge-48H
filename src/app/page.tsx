@@ -1,10 +1,14 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import Image from 'next/image';
+import Link from 'next/link';
 import { ExhibitorsTable } from '@/components/ExhibitorsTable';
 import { Chat } from '@/components/Chat';
 import { ScrapeProgress } from '@/components/ScrapeProgress';
 import { Exhibitor } from '@/lib/schema';
+import { Search, CheckCircle2, XCircle, Loader2, Moon, Sun } from 'lucide-react';
+import { useEffect } from 'react';
 
 interface Message {
   id: string;
@@ -28,6 +32,26 @@ export default function Home() {
     active: false, status: '', current: 0, total: 0, phase: 'idle',
   });
 
+  const [isDarkMode, setIsDarkMode] = useState(false);
+
+  // Initialize theme
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const isDark = document.documentElement.classList.contains('dark');
+      setIsDarkMode(isDark);
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    const newDarkMode = !isDarkMode;
+    setIsDarkMode(newDarkMode);
+    if (newDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
+
   const sendMessage = useCallback(async (text: string) => {
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -48,6 +72,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+          exhibitors: exhibitors,
         }),
       });
 
@@ -67,7 +92,7 @@ export default function Home() {
         const statusMsg: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: '🔍 Extraction en cours...',
+          content: 'Extraction en cours...',
         };
         setMessages(prev => [...prev, statusMsg]);
 
@@ -139,7 +164,7 @@ export default function Home() {
                       const updated = [...prev];
                       updated[updated.length - 1] = {
                         ...updated[updated.length - 1],
-                        content: `✅ Extraction terminée ! ${collectedExhibitors.length} exposants récupérés avec les informations détaillées.`,
+                        content: `Extraction terminée ! ${collectedExhibitors.length} exposants récupérés avec les informations détaillées.`,
                       };
                       return updated;
                     });
@@ -151,7 +176,7 @@ export default function Home() {
                       const updated = [...prev];
                       updated[updated.length - 1] = {
                         ...updated[updated.length - 1],
-                        content: `❌ ${event.message || 'Une erreur est survenue.'}`,
+                        content: `${event.message || 'Une erreur est survenue.'}`,
                       };
                       return updated;
                     });
@@ -212,14 +237,35 @@ export default function Home() {
   return (
     <div className="flex h-screen w-full flex-col bg-background text-foreground md:flex-row font-sans">
       <div className="flex w-full flex-col border-r border-border md:h-full md:w-[400px] lg:w-[450px] overflow-hidden">
-        <div className="flex h-16 items-center border-b px-6 bg-muted/30 shrink-0">
-          <h1 className="text-xl font-bold tracking-tight text-primary">Shaarp Scraper AI</h1>
+        <div className="flex h-16 items-center border-b px-6 bg-muted/30 shrink-0 justify-between">
+          <div className="flex items-center gap-2">
+            <Image 
+              src="/logo-shaarp.png" 
+              alt="Shaarp Logo" 
+              width={110} 
+              height={36} 
+              className="h-8 w-auto object-contain dark:invert"
+              priority
+            />
+          </div>
+          <button 
+            onClick={toggleTheme}
+            className="p-2 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            title={isDarkMode ? "Passer au thème clair" : "Passer au thème sombre"}
+          >
+            {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
         </div>
         <Chat 
            messages={messages} 
            sendMessage={sendMessage}
            isLoading={isLoading} 
         />
+        <footer className="h-10 border-t shrink-0 flex items-center justify-center gap-4 text-[10px] text-muted-foreground uppercase tracking-widest bg-muted/10">
+          <Link href="/legal/privacy" className="hover:text-primary transition-colors">Mention RGPD</Link>
+          <span className="text-muted-foreground/30">•</span>
+          <Link href="/legal/terms" className="hover:text-primary transition-colors">Conditions d'utilisation</Link>
+        </footer>
       </div>
       <div className="flex flex-1 flex-col overflow-hidden bg-muted/10">
         {progress.active && (
@@ -230,7 +276,7 @@ export default function Home() {
             phase={progress.phase}
           />
         )}
-        <ExhibitorsTable exhibitors={exhibitors} />
+        <ExhibitorsTable exhibitors={exhibitors} isLoading={progress.active} />
       </div>
     </div>
   );

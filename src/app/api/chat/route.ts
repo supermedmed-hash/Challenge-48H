@@ -6,8 +6,12 @@ export const maxDuration = 300; // 5 minutes for deep scraping
 
 // Simple URL detection
 function extractUrl(text: string): string | null {
-  const match = text.match(/https?:\/\/[^\s"'<>]+/i);
-  return match ? match[0] : null;
+  const match = text.match(/https?:\/\/[^\s"'<>]*/i);
+  if (!match || !match[0]) return null;
+  let url = match[0];
+  // Trim trailing punctuation usually added by mistake in prompt
+  url = url.replace(/[.\*!?;:,]$/, "");
+  return url;
 }
 
 export async function POST(req: Request) {
@@ -38,7 +42,7 @@ export async function POST(req: Request) {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          for await (const event of scrapeExhibitorsStream(url)) {
+          for await (const event of scrapeExhibitorsStream(url, lastUserMsg.content)) {
             const line = JSON.stringify(event) + '\n';
             controller.enqueue(encoder.encode(line));
           }
@@ -60,14 +64,24 @@ export async function POST(req: Request) {
     });
   }
 
+  const exhibitors = body.exhibitors || [];
+  const exhibitorsSummary = exhibitors.length > 0 
+    ? `Données actuellement extraites (${exhibitors.length} entreprises) :\n${JSON.stringify(exhibitors.slice(0, 100), null, 2)}`
+    : "Aucune donnée n'a été extraite pour le moment.";
+
   // No URL: just chat normally
   const result = streamText({
     model: openai.chat('gpt-4.1-mini'),
     messages,
     system: `Tu es "Shaarp Expo Scraper", un agent d'extraction B2B.
 Ton rôle est d'extraire la liste des exposants depuis les sites web de salons professionnels.
-Si l'utilisateur te fournit une URL, tu vas analyser la page et extraire les données.
-Si l'utilisateur ne fournit pas d'URL, demande-lui poliment de fournir l'URL de la page d'exposants du salon qu'il souhaite analyser.
+
+SI DES DONNÉES SONT FOURNIES CI-DESSOUS, utilise-les pour répondre aux questions de l'utilisateur sur les entreprises déjà trouvées (ex: comptage, filtrage par secteur, etc.).
+${exhibitorsSummary}
+
+Si l'utilisateur te fournit une nouvelle URL, tu vas analyser la page et extraire les données.
+Si l'utilisateur ne fournit pas d'URL et que tu as déjà des données, réponds directement à ses questions sur ces données.
+Si l'utilisateur ne fournit pas d'URL et que tu n'as pas de données, demande-lui poliment de fournir l'URL de la page d'exposants du salon qu'il souhaite analyser.
 Reste toujours courtois, professionnel et concis.`,
   });
 
